@@ -306,7 +306,6 @@ export default function Home() {
         return; // IMPORTANTE: No avanzar si hubo un error de red
       }
       setIsLoading(false);
-      setIsLoading(false);
     }
 
     // Paso 4: Buscar o crear cliente y revisar fidelización
@@ -377,10 +376,9 @@ export default function Home() {
     
     const payload = {
       business_id: selectedService.business_id,
-      business_id: selectedService.business_id,
       service_id: selectedService.id,
       provider_id: selectedProvider.id,
-      customer_id: customerId || 1, 
+      customer_id: customerId || 1,
       startTime: start.toISOString(),
       endTime: end.toISOString()
     };

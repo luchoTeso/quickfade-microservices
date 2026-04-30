@@ -35,6 +35,54 @@ services:
       - rabbitmq_data:/var/lib/rabbitmq
     restart: unless-stopped
 
+  appointments-service:
+    build: ./services/appointments-service
+    container_name: turnos_appointments
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - DATABASE_URL=postgres://user:password@postgres:5432/turnos_reservas
+      - REDIS_URL=redis://redis:6379
+      - RABBITMQ_URL=amqp://user:password@rabbitmq:5672
+    depends_on:
+      - postgres
+      - redis
+      - rabbitmq
+    restart: unless-stopped
+
+  notifications-service:
+    build: ./services/notifications-service
+    container_name: turnos_notifications
+    environment:
+      - RABBITMQ_URL=amqp://user:password@rabbitmq:5672
+      - TEST_EMAIL_RECIPIENT=ldiuchep@ucentral.edu.co
+      # - RESEND_API_KEY=pon_tu_api_key_aqui
+    depends_on:
+      - rabbitmq
+    restart: unless-stopped
+
+  api-gateway:
+    build: ./api-gateway
+    container_name: turnos_gateway
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - APPOINTMENTS_SERVICE_URL=http://appointments-service:3001
+    depends_on:
+      - appointments-service
+    restart: unless-stopped
+
+  client-app:
+    build: ./client-app
+    container_name: turnos_frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api-gateway
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   redis_data:

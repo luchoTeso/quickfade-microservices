@@ -82,6 +82,12 @@ CREATE TABLE appointments (
 -- Índices para mejorar la velocidad de búsqueda
 CREATE INDEX idx_appointments_business_time ON appointments(business_id, start_time_utc);
 
+-- UNIQUE INDEX PARCIAL: Previene race conditions a nivel de base de datos.
+-- Garantiza que un proveedor NO pueda tener dos citas activas en el mismo horario.
+CREATE UNIQUE INDEX idx_unique_provider_slot 
+  ON appointments(provider_id, start_time_utc) 
+  WHERE status IN ('confirmed', 'pending');
+
 -- DATOS DE PRUEBA INICIALES (Mapeado al HTML)
 INSERT INTO countries (code, name, currency, currency_symbol, phone_prefix, default_locale, timezone) VALUES
 ('CO', 'Colombia', 'COP', '$', '+57', 'es', 'America/Bogota'),

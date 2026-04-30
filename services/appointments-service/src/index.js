@@ -27,8 +27,12 @@ pool.query('SELECT NOW()', (err, res) => {
 // 2. Configuración de RabbitMQ
 let channel = null;
 async function connectRabbitMQ() {
+  if (!process.env.RABBITMQ_URL) {
+    console.error('❌ RABBITMQ_URL no está definida en .env. Abortando conexión a RabbitMQ.');
+    return;
+  }
   try {
-    const connection = await amqp.connect(process.env.RABBITMQ_URL || 'amqp://user:password@localhost:5672');
+    const connection = await amqp.connect(process.env.RABBITMQ_URL);
     channel = await connection.createChannel();
     await channel.assertQueue('citas_creadas', { durable: true });
     console.log('✅ Conectado a RabbitMQ exitosamente.');
@@ -57,44 +61,47 @@ app.get('/health', (req, res) => {
 // ENDPOINT: Crear Cita (Transacción T1)
 // ========================================================
 app.post('/api/appointments', async (req, res) => {
-  // Datos que el frontend nos enviaría
   const { business_id, service_id, provider_id, customer_id, startTime, endTime } = req.body;
 
   try {
-    // Aquí implementamos la REGLA DE ORO: Las fechas se deben guardar en UTC.
-    // 'startTime' y 'endTime' ya deberían venir en formato ISO UTC desde el frontend.
-    // Ejemplo: '2023-11-01T20:00:00.000Z'
-
-    // 1. Verificar que el turno no haya sido tomado ya a nivel permanente (Base de Datos)
-    const checkQuery = `
-      SELECT id FROM appointments
-      WHERE provider_id = $1
-      AND start_time_utc = $2
-      AND status IN ('confirmed', 'pending', 'deposit_paid');
-    `;
-    const checkResult = await pool.query(checkQuery, [provider_id, startTime]);
-    if (checkResult.rows.length > 0) {
-      return res.status(409).json({ error: 'Lo sentimos, este turno fue tomado por alguien más justo ahora.' });
+    // 0. Validar que el proveedor realmente ofrezca este servicio
+    const psCheck = await pool.query(
+      'SELECT 1 FROM provider_services WHERE provider_id = $1 AND service_id = $2',
+      [provider_id, service_id]
+    );
+    if (psCheck.rows.length === 0) {
+      return res.status(400).json({ error: 'El especialista seleccionado no ofrece este servicio.' });
     }
 
-    // 2. Ejecutamos la inserción en la base de datos
+    // 1. Inserción atómica con ON CONFLICT para eliminar la race condition.
+    //    El UNIQUE INDEX (provider_id, start_time_utc) WHERE status IN (...)
+    //    garantiza que dos inserciones simultáneas NO puedan crear duplicados.
     const query = `
       INSERT INTO appointments (business_id, service_id, provider_id, customer_id, start_time_utc, end_time_utc, status)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      VALUES ($1, $2, $3, $4, $5, $6, 'confirmed')
       RETURNING *;
     `;
-    const values = [business_id, service_id, provider_id, customer_id, startTime, endTime, 'confirmed'];
+    const values = [business_id, service_id, provider_id, customer_id, startTime, endTime];
     
-    const result = await pool.query(query, values);
+    let result;
+    try {
+      result = await pool.query(query, values);
+    } catch (dbError) {
+      // Si viola el UNIQUE INDEX, PostgreSQL lanza error código 23505
+      if (dbError.code === '23505') {
+        return res.status(409).json({ error: 'Lo sentimos, este turno fue tomado por alguien más justo ahora.' });
+      }
+      throw dbError; // Re-lanzar si es otro error
+    }
     const newAppointment = result.rows[0];
     
-    // 3. Eliminar el candado temporal de Redis ahora que el turno es permanente
+    // 2. Eliminar el candado temporal de Redis ahora que el turno es permanente
     const dateObj = new Date(startTime);
-    const dateStr = dateObj.toISOString().split('T')[0]; // YYYY-MM-DD
-    const timeStr = dateObj.toISOString().substring(11, 16); // HH:MM
+    const dateStr = dateObj.toISOString().split('T')[0];
+    const timeStr = dateObj.toISOString().substring(11, 16);
     await redisClient.del(`lock:${provider_id}:${dateStr}:${timeStr}`);
 
-    // Publicar evento en RabbitMQ para notificar al cliente
+    // 3. Publicar evento en RabbitMQ para notificar al cliente
     if (channel) {
       const eventData = {
         appointmentId: newAppointment.id,
@@ -109,16 +116,21 @@ app.post('/api/appointments', async (req, res) => {
       console.error('⚠️ Canal de RabbitMQ no disponible, el evento no se publicó.');
     }
 
-    // 4. Actualizar la fidelización del cliente (sumar visita y consumir premio si lo tenía)
+    // 4. Actualizar fidelización: sumar visita, y SOLO consumir el premio si la cita actual era gratuita
+    const customerData = await pool.query('SELECT has_free_appointment FROM customers WHERE id = $1', [customer_id]);
+    const wasFree = customerData.rows[0]?.has_free_appointment || false;
+    
     await pool.query(`
       UPDATE customers 
-      SET visit_count = visit_count + 1, has_free_appointment = false 
+      SET visit_count = visit_count + 1,
+          has_free_appointment = CASE WHEN has_free_appointment = true THEN false ELSE has_free_appointment END
       WHERE id = $1
     `, [customer_id]);
 
     res.status(201).json({
       message: '¡Cita creada con éxito!',
-      appointment: newAppointment
+      appointment: newAppointment,
+      loyaltyUsed: wasFree
     });
   } catch (error) {
     console.error('Error al crear cita:', error);
@@ -139,9 +151,9 @@ app.post('/api/customers/lookup', async (req, res) => {
     let customer;
     if (result.rows.length > 0) {
       customer = result.rows[0];
-      // Lógica de Lealtad: Cada 7 visitas, la cita es gratis. 
-      // (Si tiene 6 visitas acumuladas, le regalamos la 7ma)
-      if (customer.visit_count > 0 && customer.visit_count % 6 === 0 && !customer.has_free_appointment) {
+      // Lógica de Lealtad: Cada 7 visitas, la cita es gratis.
+      // visit_count 7, 14, 21... → la siguiente es gratuita
+      if (customer.visit_count > 0 && customer.visit_count % 7 === 0 && !customer.has_free_appointment) {
          await pool.query(`UPDATE customers SET has_free_appointment = true WHERE id = $1`, [customer.id]);
          customer.has_free_appointment = true;
       }
@@ -291,14 +303,14 @@ app.get('/api/analytics', async (req, res) => {
     `;
     const cusResult = await pool.query(cusQuery);
 
-    // 3. Próximas 5 citas detalladas
+    // 3. Últimas 10 citas detalladas
     const recentQuery = `
-      SELECT a.id, a.start_time, c.name as customer_name, s.name as service_name, p.name as provider_name, s.price
+      SELECT a.id, a.start_time_utc, c.name as customer_name, s.name as service_name, p.name as provider_name, s.price
       FROM appointments a
       JOIN customers c ON a.customer_id = c.id
       JOIN services s ON a.service_id = s.id
       JOIN providers p ON a.provider_id = p.id
-      ORDER BY a.start_time DESC
+      ORDER BY a.start_time_utc DESC
       LIMIT 10;
     `;
     const recentResult = await pool.query(recentQuery);

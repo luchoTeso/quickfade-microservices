@@ -27,7 +27,9 @@ const sendEmail = async (email, message) => {
     try {
       const { data, error } = await resend.emails.send({
         from: 'QuickFade <onboarding@resend.dev>', // Resend permite usar este correo en la capa gratuita
-        to: "ldiuchep@ucentral.edu.co",
+        // Resend capa gratuita: Solo permite enviar al correo registrado.
+        // Si tienes dominio verificado, borrará esto y usará solo 'email'.
+        to: process.env.TEST_EMAIL_RECIPIENT || email,
         subject: '💇‍♂️ Confirmación de tu Reserva - QuickFade',
         html: `<div style="font-family: sans-serif; padding: 20px; background-color: #0D0D0D; color: white; border: 1px solid #C9A84C; border-radius: 10px;">
                  <h2 style="color: #C9A84C;">¡Turno Confirmado!</h2>
@@ -58,7 +60,11 @@ const sendEmail = async (email, message) => {
 // Trabajador de RabbitMQ
 async function startWorker() {
   try {
-    const connection = await amqp.connect(process.env.RABBITMQ_URL || 'amqp://user:password@localhost:5672');
+    if (!process.env.RABBITMQ_URL) {
+      console.error('❌ RABBITMQ_URL no está definida en .env. Abortando.');
+      return;
+    }
+    const connection = await amqp.connect(process.env.RABBITMQ_URL);
     const channel = await connection.createChannel();
 
     const queue = 'citas_creadas';

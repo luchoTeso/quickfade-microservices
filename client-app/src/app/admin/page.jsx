@@ -117,7 +117,7 @@ export default function AdminDashboard() {
                     <td className="p-4">
                       <span className="bg-white/5 px-2 py-1 rounded-md text-xs">{app.provider_name}</span>
                     </td>
-                    <td className="p-4 text-brand-gold">{formatDate(app.start_time)}</td>
+                    <td className="p-4 text-brand-gold">{formatDate(app.start_time_utc)}</td>
                     <td className="p-4 text-right font-medium">{formatMoney(app.price)}</td>
                   </tr>
                 ))
