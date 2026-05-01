@@ -264,7 +264,17 @@ export default function Home() {
           const res = await fetch(`http://localhost:8080/api/availability?providerId=${selectedProvider.id}&date=${selectedDate}`);
           if (res.ok) {
             const data = await res.json();
-            setAvailableTimes(data.availableSlots);
+            
+            // Filtrar inteligentemente los horarios que ya pasaron en la zona horaria del cliente
+            const now = new Date();
+            const filteredSlots = data.availableSlots.filter(slot => {
+              const [year, month, day] = selectedDate.split('-');
+              const [hourStr, minStr] = slot.split(':');
+              const slotTime = new Date(year, month - 1, day, parseInt(hourStr), parseInt(minStr));
+              return slotTime > now; // Solo mostrar si la hora aún no ha pasado
+            });
+            
+            setAvailableTimes(filteredSlots);
           }
         } catch (error) {
           console.error("Error al obtener disponibilidad:", error);
