@@ -98,19 +98,44 @@ async function startWorker() {
             const formattedDate = dateObj.toLocaleDateString(data.preferred_locale);
             const formattedTime = dateObj.toLocaleTimeString(data.preferred_locale, { hour: '2-digit', minute: '2-digit' });
 
-            // Plantillas i18n
+            // Plantillas i18n según la acción (CREATED, RESCHEDULED, CANCELLED)
             let waMsg = '';
             let emailMsg = '';
+            const action = event.action || 'CREATED';
 
-            if (data.preferred_locale === 'fr') {
-              waMsg = `Salut ${data.customer_name} ! Votre rendez-vous pour ${data.service_name} chez ${data.business_name} est confirmé pour le ${formattedDate} à ${formattedTime}. ID: #${event.appointmentId}`;
-              emailMsg = `Rendez-vous confirmé. Merci d'avoir choisi QuickFade ${data.country_name}.`;
-            } else if (data.preferred_locale === 'en') {
-              waMsg = `Hi ${data.customer_name}! Your appointment for ${data.service_name} at ${data.business_name} is confirmed for ${formattedDate} at ${formattedTime}. ID: #${event.appointmentId}`;
-              emailMsg = `Appointment confirmed. Thanks for choosing QuickFade ${data.country_name}.`;
-            } else {
-              waMsg = `¡Hola ${data.customer_name}! Tu cita para ${data.service_name} en ${data.business_name} está confirmada para el ${formattedDate} a las ${formattedTime}. ID: #${event.appointmentId}`;
-              emailMsg = `Cita confirmada exitosamente. Gracias por elegir QuickFade ${data.country_name}.`;
+            if (action === 'CREATED') {
+              if (data.preferred_locale === 'fr') {
+                waMsg = `Salut ${data.customer_name} ! Votre rendez-vous pour ${data.service_name} chez ${data.business_name} est confirmé pour le ${formattedDate} à ${formattedTime}. ID: #${event.appointmentId}`;
+                emailMsg = `Rendez-vous confirmé. Merci d'avoir choisi QuickFade ${data.country_name}.`;
+              } else if (data.preferred_locale === 'en') {
+                waMsg = `Hi ${data.customer_name}! Your appointment for ${data.service_name} at ${data.business_name} is confirmed for ${formattedDate} at ${formattedTime}. ID: #${event.appointmentId}`;
+                emailMsg = `Appointment confirmed. Thanks for choosing QuickFade ${data.country_name}.`;
+              } else {
+                waMsg = `¡Hola ${data.customer_name}! Tu cita para ${data.service_name} en ${data.business_name} está confirmada para el ${formattedDate} a las ${formattedTime}. ID: #${event.appointmentId}`;
+                emailMsg = `Cita confirmada exitosamente. Gracias por elegir QuickFade ${data.country_name}.`;
+              }
+            } else if (action === 'RESCHEDULED') {
+              if (data.preferred_locale === 'fr') {
+                waMsg = `Salut ${data.customer_name} ! Votre rendez-vous a été reprogrammé pour le ${formattedDate} à ${formattedTime}. ID: #${event.appointmentId}`;
+                emailMsg = `Rendez-vous reprogrammé avec succès.`;
+              } else if (data.preferred_locale === 'en') {
+                waMsg = `Hi ${data.customer_name}! Your appointment has been rescheduled to ${formattedDate} at ${formattedTime}. ID: #${event.appointmentId}`;
+                emailMsg = `Appointment rescheduled successfully.`;
+              } else {
+                waMsg = `¡Hola ${data.customer_name}! Tu cita ha sido reprogramada para el ${formattedDate} a las ${formattedTime}. ID: #${event.appointmentId}`;
+                emailMsg = `Cita reprogramada exitosamente.`;
+              }
+            } else if (action === 'CANCELLED') {
+              if (data.preferred_locale === 'fr') {
+                waMsg = `Salut ${data.customer_name}. Votre rendez-vous (ID: #${event.appointmentId}) a été annulé.`;
+                emailMsg = `Annulation de rendez-vous confirmée.`;
+              } else if (data.preferred_locale === 'en') {
+                waMsg = `Hi ${data.customer_name}. Your appointment (ID: #${event.appointmentId}) has been cancelled.`;
+                emailMsg = `Appointment cancellation confirmed.`;
+              } else {
+                waMsg = `¡Hola ${data.customer_name}. Tu cita (ID: #${event.appointmentId}) ha sido cancelada exitosamente.`;
+                emailMsg = `Cancelación de cita confirmada.`;
+              }
             }
 
             // Simular envío

@@ -104,6 +104,7 @@ app.post('/api/appointments', async (req, res) => {
     // 3. Publicar evento en RabbitMQ para notificar al cliente
     if (channel) {
       const eventData = {
+        action: 'CREATED',
         appointmentId: newAppointment.id,
         customerId: customer_id,
         businessId: business_id,
@@ -278,6 +279,128 @@ app.post('/api/lock-slot', async (req, res) => {
     }
   } catch (error) {
     console.error('Error al bloquear horario en Redis:', error);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// ========================================================
+// ENDPOINT: Consultar Cita (Transacción T21)
+// ========================================================
+app.get('/api/appointments/:id', async (req, res) => {
+  try {
+    const query = `
+      SELECT a.id, a.start_time_utc, a.end_time_utc, a.status, a.payment_status,
+             s.name as service_name, s.duration_minutes, s.price,
+             p.name as provider_name, c.name as customer_name
+      FROM appointments a
+      JOIN services s ON a.service_id = s.id
+      JOIN providers p ON a.provider_id = p.id
+      JOIN customers c ON a.customer_id = c.id
+      WHERE a.id = $1;
+    `;
+    const result = await pool.query(query, [req.params.id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Cita no encontrada' });
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error al consultar cita:', error);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// ========================================================
+// ENDPOINT: Reprogramar Cita (Transacción T22)
+// ========================================================
+app.put('/api/appointments/:id/reschedule', async (req, res) => {
+  const { id } = req.params;
+  const { newStartTime, newEndTime } = req.body; // Fechas en formato ISO
+
+  try {
+    // 1. Verificar si la cita existe y obtener el provider_id
+    const checkQuery = await pool.query('SELECT provider_id, status FROM appointments WHERE id = $1', [id]);
+    if (checkQuery.rows.length === 0) return res.status(404).json({ error: 'Cita no encontrada' });
+    if (checkQuery.rows[0].status === 'cancelled') return res.status(400).json({ error: 'No se puede reprogramar una cita cancelada' });
+    
+    const provider_id = checkQuery.rows[0].provider_id;
+
+    // 2. Actualizar hora atómicamente. El UNIQUE INDEX protegerá si el nuevo slot está ocupado
+    const query = `
+      UPDATE appointments 
+      SET start_time_utc = $1, end_time_utc = $2 
+      WHERE id = $3 RETURNING *;
+    `;
+    let result;
+    try {
+      result = await pool.query(query, [newStartTime, newEndTime, id]);
+    } catch (dbError) {
+      if (dbError.code === '23505') {
+        return res.status(409).json({ error: 'Lo sentimos, el nuevo horario fue tomado por alguien más.' });
+      }
+      throw dbError;
+    }
+
+    const updatedAppointment = result.rows[0];
+
+    // 3. Liberar el lock de Redis del *nuevo* horario (Si se bloqueó en el paso 3 del UI, ya es permanente)
+    const dateObj = new Date(newStartTime);
+    const dateStr = dateObj.toISOString().split('T')[0];
+    const timeStr = dateObj.toISOString().substring(11, 16);
+    await redisClient.del(`lock:${provider_id}:${dateStr}:${timeStr}`);
+
+    // 4. Publicar evento RESCHEDULED en RabbitMQ
+    if (channel) {
+      const eventData = {
+        action: 'RESCHEDULED',
+        appointmentId: updatedAppointment.id,
+        customerId: updatedAppointment.customer_id,
+        startTime: newStartTime,
+      };
+      channel.sendToQueue('citas_creadas', Buffer.from(JSON.stringify(eventData)));
+    }
+
+    res.json({ message: 'Cita reprogramada exitosamente', appointment: updatedAppointment });
+  } catch (error) {
+    console.error('Error al reprogramar cita:', error);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// ========================================================
+// ENDPOINT: Cancelar Cita (Transacción T23)
+// ========================================================
+app.put('/api/appointments/:id/cancel', async (req, res) => {
+  const { id } = req.params;
+  const { reason } = req.body;
+
+  try {
+    const query = `
+      UPDATE appointments 
+      SET status = 'cancelled', cancellation_reason = $1, cancelled_at = NOW()
+      WHERE id = $2 AND status != 'cancelled'
+      RETURNING *;
+    `;
+    const result = await pool.query(query, [reason || 'Cancelada por el usuario', id]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Cita no encontrada o ya estaba cancelada' });
+    }
+
+    const cancelledAppointment = result.rows[0];
+
+    // Publicar evento CANCELLED en RabbitMQ
+    if (channel) {
+      const eventData = {
+        action: 'CANCELLED',
+        appointmentId: cancelledAppointment.id,
+        customerId: cancelledAppointment.customer_id,
+        startTime: cancelledAppointment.start_time_utc,
+      };
+      // Usamos la misma cola por conveniencia, el worker diferenciará por action
+      channel.sendToQueue('citas_creadas', Buffer.from(JSON.stringify(eventData)));
+    }
+
+    res.json({ message: 'Cita cancelada exitosamente', appointment: cancelledAppointment });
+  } catch (error) {
+    console.error('Error al cancelar cita:', error);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

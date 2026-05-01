@@ -514,8 +514,14 @@ export default function Home() {
     <>
       {/* Barra de Países */}
       <nav className="fixed top-0 left-0 right-0 z-50 bg-[#0D0D0D]/95 backdrop-blur-md border-b border-brand-gold/20 px-4 sm:px-8 py-3 flex items-center justify-between">
-        <div className="font-serif text-xl font-black text-gradient tracking-wide">QuickFade</div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-6">
+          <div className="font-serif text-xl font-black text-gradient tracking-wide">QuickFade</div>
+          <a href="/gestion" className="hidden sm:block text-xs font-bold text-white/50 hover:text-brand-gold transition-colors border border-white/10 px-3 py-1.5 rounded-full hover:border-brand-gold/30">
+            Gestionar Cita
+          </a>
+        </div>
+        <div className="flex gap-2 items-center">
+          <a href="/gestion" className="sm:hidden text-xs font-bold text-brand-gold mr-2">Gestionar</a>
           {Object.entries(COUNTRIES).map(([code, c]) => (
             <button key={code} onClick={() => setCountry(code)}
               className={`px-2 py-1 sm:px-3 sm:py-1.5 rounded-lg border text-xs sm:text-sm flex items-center gap-1.5 transition-colors
@@ -728,12 +734,17 @@ export default function Home() {
               <p className="text-white/50 text-sm mb-6">{t.successSub}</p>
               
               <div className="bg-brand-dark3 border border-brand-gold/30 font-mono text-brand-gold text-lg tracking-widest rounded-xl py-3 px-6 mb-8 inline-block">
-                ID: #BK-{bookingId}
+                ID: {bookingId}
               </div>
               
-              <button onClick={() => setStep(1)} className="w-full py-4 bg-brand-dark3 border-[1.5px] border-white/10 text-white rounded-xl hover:border-white/30 transition-all">
-                {t.btnNew}
-              </button>
+              <div className="flex flex-col gap-3">
+                <a href={`/gestion`} className="w-full py-4 bg-brand-gold text-black font-bold rounded-xl hover:bg-white transition-all text-center">
+                  Gestionar mi Cita
+                </a>
+                <button onClick={() => setStep(1)} className="w-full py-4 bg-brand-dark3 border-[1.5px] border-white/10 text-white rounded-xl hover:border-white/30 transition-all">
+                  {t.btnNew}
+                </button>
+              </div>
             </div>
           )}
         </div>
