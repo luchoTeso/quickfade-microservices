@@ -45,6 +45,7 @@ services:
       - DATABASE_URL=postgres://user:password@postgres:5432/turnos_reservas
       - REDIS_URL=redis://redis:6379
       - RABBITMQ_URL=amqp://user:password@rabbitmq:5672
+      - ALLOWED_ORIGINS=http://localhost:3000
     depends_on:
       - postgres
       - redis
@@ -56,6 +57,9 @@ services:
     container_name: turnos_notifications
     environment:
       - RABBITMQ_URL=amqp://user:password@rabbitmq:5672
+      - DATABASE_URL=postgres://user:password@postgres:5432/turnos_reservas
+      - NODE_ENV=development
+      # Solo activo en desarrollo. Comentar en producción para enviar al cliente real.
       - TEST_EMAIL_RECIPIENT=ldiuchep@ucentral.edu.co
       # - RESEND_API_KEY=pon_tu_api_key_aqui
     depends_on:
@@ -70,6 +74,7 @@ services:
     environment:
       - PORT=8080
       - APPOINTMENTS_SERVICE_URL=http://appointments-service:3001
+      - ALLOWED_ORIGINS=http://localhost:3000
     depends_on:
       - appointments-service
     restart: unless-stopped

@@ -22,59 +22,44 @@ Para ejecutar este proyecto en tu máquina local, necesitas tener instalado:
 
 ---
 
-## 🚀 Guía de Instalación (Entorno de Desarrollo)
+## 🚀 Guía de Instalación
 
-Sigue estos pasos en orden para levantar el proyecto localmente sin errores:
+Existen dos formas de correr este proyecto. Elige la que mejor se adapte a lo que necesitas hacer:
 
-### 1. Clonar el repositorio
-```bash
-git clone <url-de-tu-repositorio>
-cd "Sistema de Turnos y reservas"
-```
+### 🌟 Modo 1: Todo en Docker (Recomendado para probar / Producción)
+Usa este modo si solo quieres levantar el proyecto completo sin instalar Node.js localmente ni usar scripts.
 
-### 2. Configurar Variables de Entorno (.env)
-Debes crear/verificar la existencia de dos archivos `.env` en los microservicios:
+1. **Clona el repositorio**
+   ```bash
+   git clone <url-de-tu-repositorio>
+   cd "Sistema de Turnos y reservas"
+   ```
+2. **Levanta todo el ecosistema (Infraestructura + Microservicios)**
+   ```powershell
+   docker-compose up -d --build
+   ```
+   *Nota: La primera vez descargará todas las imágenes y PostgreSQL creará la base de datos con el archivo `infrastructure/init.sql`.*
 
-**A. `services/appointments-service/.env`**
-```env
-PORT=3001
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/turnos_reservas
-REDIS_URL=redis://localhost:6379
-RABBITMQ_URL=amqp://localhost:5672
-```
+3. ¡Listo! Ve a **[http://localhost:3000](http://localhost:3000)** en tu navegador.
 
-**B. `services/notifications-service/.env`**
-```env
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/turnos_reservas
-RABBITMQ_URL=amqp://localhost:5672
-RESEND_API_KEY=re_tu_api_key_de_resend_aqui
-TEST_EMAIL_RECIPIENT=tu_correo_de_prueba@gmail.com
-```
 
-### 3. Instalar Dependencias
-Para evitar instalar carpeta por carpeta, puedes ejecutar este comando desde la raíz (PowerShell):
-```powershell
-npm run install --prefix api-gateway; npm run install --prefix client-app; npm run install --prefix services/appointments-service; npm run install --prefix services/notifications-service
-```
-*(Alternativamente, entra a cada carpeta y ejecuta `npm install`).*
+### 💻 Modo 2: Modo Desarrollo Local (Para programar con Hot-Reload)
+Usa este modo si vas a modificar el código y necesitas que los cambios se reflejen en tiempo real.
 
-### 4. Levantar la Infraestructura (Docker)
-Antes de encender el código, debemos encender la Base de Datos, Redis y RabbitMQ.
-Ejecuta en la consola (en la raíz del proyecto):
-```bash
-docker-compose up -d postgres redis rabbitmq
-```
-> **Nota:** La primera vez que se ejecute, PostgreSQL leerá automáticamente el archivo `infrastructure/init.sql` y creará todas las tablas y datos de prueba.
-
-### 5. Iniciar los Microservicios
-Una vez que los contenedores estén listos, arranca todos los servicios de Node.js y Next.js con el script maestro:
-```powershell
-.\start-dev.ps1
-```
-
-¡Listo! Tu consola mostrará los 4 servicios corriendo simultáneamente.
-
----
+1. **Clona el repositorio e instala las dependencias** (Requiere Node.js)
+   ```powershell
+   npm run install --prefix api-gateway; npm run install --prefix client-app; npm run install --prefix services/appointments-service; npm run install --prefix services/notifications-service
+   ```
+2. **Levanta SOLO la infraestructura en Docker** (BD, Redis, Colas)
+   ```powershell
+   docker-compose up -d postgres redis rabbitmq
+   ```
+   *(Asegúrate de NO tener los demás contenedores corriendo para evitar conflictos de puertos).*
+3. **Inicia los servidores de código**
+   ```powershell
+   .\start-dev.ps1
+   ```
+4. Abre **[http://localhost:3000](http://localhost:3000)** en tu navegador.
 
 ## 🌐 URLs de Acceso
 

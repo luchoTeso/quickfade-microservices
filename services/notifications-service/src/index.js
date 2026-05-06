@@ -29,7 +29,9 @@ const sendEmail = async (email, message) => {
         from: 'QuickFade <onboarding@resend.dev>', // Resend permite usar este correo en la capa gratuita
         // Resend capa gratuita: Solo permite enviar al correo registrado.
         // Si tienes dominio verificado, borrará esto y usará solo 'email'.
-        to: process.env.TEST_EMAIL_RECIPIENT || email,
+        to: (process.env.NODE_ENV !== 'production' && process.env.TEST_EMAIL_RECIPIENT)
+              ? process.env.TEST_EMAIL_RECIPIENT
+              : email,
         subject: '💇‍♂️ Confirmación de tu Reserva - QuickFade',
         html: `<div style="font-family: sans-serif; padding: 20px; background-color: #0D0D0D; color: white; border: 1px solid #C9A84C; border-radius: 10px;">
                  <h2 style="color: #C9A84C;">¡Turno Confirmado!</h2>

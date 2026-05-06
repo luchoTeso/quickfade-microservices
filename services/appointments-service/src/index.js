@@ -1,11 +1,19 @@
 require('dotenv').config();
+const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
 const amqp = require('amqplib');
 
 const app = express();
-app.use(cors());
+// CORS: solo permitir orígenes configurados (whitelist)
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000').split(',');
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin || allowedOrigins.includes(origin)) cb(null, true);
+    else cb(new Error('Not allowed by CORS'));
+  },
+}));
 app.use(express.json());
 
 const PORT = process.env.PORT || 3001;
@@ -53,6 +61,21 @@ redisClient.on('error', (err) => console.error('❌ Error en Redis:', err));
 redisClient.on('connect', () => console.log('✅ Conectado a Redis exitosamente.'));
 redisClient.connect();
 
+const BUSINESS_HOURS = ['09:00', '10:00', '11:00', '14:00', '15:00', '16:00', '17:00'];
+
+async function validateAppointmentToken(req, res, next) {
+  const token = req.headers['x-appointment-token'] || req.query.token;
+  const { id } = req.params;
+  if (!token) return res.status(401).json({ error: 'Se requiere token de cita (X-Appointment-Token).' });
+  try {
+    const result = await pool.query('SELECT id FROM appointments WHERE id = $1 AND access_token = $2', [id, token]);
+    if (result.rows.length === 0) return res.status(403).json({ error: 'Token inválido o cita no encontrada.' });
+    next();
+  } catch (err) {
+    res.status(500).json({ error: 'Error del servidor al validar token.' });
+  }
+}
+
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', service: 'appointments-service' });
 });
@@ -64,24 +87,29 @@ app.post('/api/appointments', async (req, res) => {
   const { business_id, service_id, provider_id, customer_id, startTime, endTime } = req.body;
 
   try {
-    // 0. Validar que el proveedor realmente ofrezca este servicio
+    // 0. Validar que el proveedor ofrezca este servicio y que ambos pertenezcan al mismo negocio
     const psCheck = await pool.query(
-      'SELECT 1 FROM provider_services WHERE provider_id = $1 AND service_id = $2',
-      [provider_id, service_id]
+      `SELECT 1 FROM provider_services ps
+       JOIN services s ON s.id = ps.service_id
+       JOIN providers p ON p.id = ps.provider_id
+       WHERE ps.provider_id = $1 AND ps.service_id = $2
+         AND s.business_id = $3 AND p.business_id = $3`,
+      [provider_id, service_id, business_id]
     );
     if (psCheck.rows.length === 0) {
-      return res.status(400).json({ error: 'El especialista seleccionado no ofrece este servicio.' });
+      return res.status(400).json({ error: 'El especialista no ofrece este servicio o no pertenece a este negocio.' });
     }
 
     // 1. Inserción atómica con ON CONFLICT para eliminar la race condition.
     //    El UNIQUE INDEX (provider_id, start_time_utc) WHERE status IN (...)
     //    garantiza que dos inserciones simultáneas NO puedan crear duplicados.
+    const accessToken = crypto.randomBytes(20).toString('hex');
     const query = `
-      INSERT INTO appointments (business_id, service_id, provider_id, customer_id, start_time_utc, end_time_utc, status)
-      VALUES ($1, $2, $3, $4, $5, $6, 'confirmed')
+      INSERT INTO appointments (business_id, service_id, provider_id, customer_id, start_time_utc, end_time_utc, status, access_token)
+      VALUES ($1, $2, $3, $4, $5, $6, 'confirmed', $7)
       RETURNING *;
     `;
-    const values = [business_id, service_id, provider_id, customer_id, startTime, endTime];
+    const values = [business_id, service_id, provider_id, customer_id, startTime, endTime, accessToken];
     
     let result;
     try {
@@ -131,6 +159,7 @@ app.post('/api/appointments', async (req, res) => {
     res.status(201).json({
       message: '¡Cita creada con éxito!',
       appointment: newAppointment,
+      accessToken: newAppointment.access_token,
       loyaltyUsed: wasFree
     });
   } catch (error) {
@@ -145,29 +174,23 @@ app.post('/api/appointments', async (req, res) => {
 app.post('/api/customers/lookup', async (req, res) => {
   const { name, phone_number, email, preferred_locale } = req.body;
   try {
-    // Buscar si existe el cliente por teléfono
-    let query = `SELECT id, visit_count, has_free_appointment FROM customers WHERE phone_number = $1`;
-    let result = await pool.query(query, [phone_number]);
-    
-    let customer;
-    if (result.rows.length > 0) {
-      customer = result.rows[0];
-      // Lógica de Lealtad: Cada 7 visitas, la cita es gratis.
-      // visit_count 7, 14, 21... → la siguiente es gratuita
-      if (customer.visit_count > 0 && customer.visit_count % 7 === 0 && !customer.has_free_appointment) {
-         await pool.query(`UPDATE customers SET has_free_appointment = true WHERE id = $1`, [customer.id]);
-         customer.has_free_appointment = true;
-      }
-    } else {
-      // Es un cliente nuevo (Se crea con valores por defecto: 0 visitas)
-      const insertQuery = `
-        INSERT INTO customers (name, phone_number, email, preferred_locale)
-        VALUES ($1, $2, $3, $4) RETURNING id, visit_count, has_free_appointment
-      `;
-      const insertResult = await pool.query(insertQuery, [name, phone_number, email, preferred_locale]);
-      customer = insertResult.rows[0];
+    // Upsert atómico: elimina la race condition del flujo SELECT→INSERT
+    const upsertResult = await pool.query(`
+      INSERT INTO customers (name, phone_number, email, preferred_locale)
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT (phone_number) DO UPDATE
+        SET email = COALESCE(NULLIF(customers.email, ''), EXCLUDED.email)
+      RETURNING id, visit_count, has_free_appointment
+    `, [name, phone_number, email, preferred_locale]);
+
+    let customer = upsertResult.rows[0];
+
+    // Lógica de Lealtad: Cada 7 visitas, la cita es gratis.
+    if (customer.visit_count > 0 && customer.visit_count % 7 === 0 && !customer.has_free_appointment) {
+      await pool.query('UPDATE customers SET has_free_appointment = true WHERE id = $1', [customer.id]);
+      customer.has_free_appointment = true;
     }
-    
+
     res.json(customer);
   } catch (error) {
     console.error('Error en lookup de cliente:', error);
@@ -218,26 +241,23 @@ app.get('/api/providers/:businessId', async (req, res) => {
 // ENDPOINT: Obtener Disponibilidad (Transacción T13)
 // ========================================================
 app.get('/api/availability', async (req, res) => {
-  const { providerId, date } = req.query; // date en formato YYYY-MM-DD
+  const { providerId, date, timezone } = req.query; // date en formato YYYY-MM-DD
+  const tz = timezone || 'UTC';
   try {
     // 1. Definir horario comercial base (ej: 09:00 a 17:00, cada hora)
-    const allSlots = ['09:00', '10:00', '11:00', '14:00', '15:00', '16:00', '17:00'];
-    
-    // 2. Buscar en PostgreSQL turnos confirmados para ese proveedor en esa fecha
+    const allSlots = BUSINESS_HOURS;
+
+    // 2. Buscar en PostgreSQL turnos confirmados en la zona horaria local del negocio
     const pgQuery = `
-      SELECT start_time_utc 
-      FROM appointments 
-      WHERE provider_id = $1 
-      AND DATE(start_time_utc) = $2
-      AND status IN ('confirmed', 'pending');
+      SELECT to_char(start_time_utc AT TIME ZONE $3, 'HH24:MI') AS local_time
+      FROM appointments
+      WHERE provider_id = $1
+        AND (start_time_utc AT TIME ZONE $3)::date = $2::date
+        AND status IN ('confirmed', 'pending');
     `;
-    const pgResult = await pool.query(pgQuery, [providerId, date]);
-    
-    // Extraer solo la hora en formato HH:MM
-    const bookedInPg = pgResult.rows.map(row => {
-      const d = new Date(row.start_time_utc);
-      return d.toISOString().substring(11, 16); // Obtiene "HH:MM" de UTC
-    });
+    const pgResult = await pool.query(pgQuery, [providerId, date, tz]);
+
+    const bookedInPg = pgResult.rows.map(row => row.local_time);
 
     // 3. Buscar en Redis bloqueos temporales actuales para ese proveedor y fecha
     // Las llaves en Redis tendrán el formato: lock:providerId:date:time
@@ -286,7 +306,7 @@ app.post('/api/lock-slot', async (req, res) => {
 // ========================================================
 // ENDPOINT: Consultar Cita (Transacción T21)
 // ========================================================
-app.get('/api/appointments/:id', async (req, res) => {
+app.get('/api/appointments/:id', validateAppointmentToken, async (req, res) => {
   try {
     const query = `
       SELECT a.id, a.start_time_utc, a.end_time_utc, a.status, a.payment_status,
@@ -310,9 +330,27 @@ app.get('/api/appointments/:id', async (req, res) => {
 // ========================================================
 // ENDPOINT: Reprogramar Cita (Transacción T22)
 // ========================================================
-app.put('/api/appointments/:id/reschedule', async (req, res) => {
+app.put('/api/appointments/:id/reschedule', validateAppointmentToken, async (req, res) => {
   const { id } = req.params;
   const { newStartTime, newEndTime } = req.body; // Fechas en formato ISO
+
+  const start = new Date(newStartTime);
+  const end = new Date(newEndTime);
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+    return res.status(400).json({ error: 'Fechas inválidas.' });
+  }
+  if (start <= new Date()) {
+    return res.status(400).json({ error: 'No puedes reprogramar a una fecha en el pasado.' });
+  }
+  if (end <= start) {
+    return res.status(400).json({ error: 'La hora de fin debe ser posterior a la hora de inicio.' });
+  }
+
+  // Validar que la hora esté dentro del horario comercial
+  const localTime = req.body.newLocalTime || `${String(start.getUTCHours()).padStart(2,'0')}:${String(start.getUTCMinutes()).padStart(2,'0')}`;
+  if (!BUSINESS_HOURS.includes(localTime)) {
+    return res.status(400).json({ error: `Horario no válido. Los horarios disponibles son: ${BUSINESS_HOURS.join(', ')}` });
+  }
 
   try {
     // 1. Verificar si la cita existe y obtener el provider_id
@@ -367,7 +405,7 @@ app.put('/api/appointments/:id/reschedule', async (req, res) => {
 // ========================================================
 // ENDPOINT: Cancelar Cita (Transacción T23)
 // ========================================================
-app.put('/api/appointments/:id/cancel', async (req, res) => {
+app.put('/api/appointments/:id/cancel', validateAppointmentToken, async (req, res) => {
   const { id } = req.params;
   const { reason } = req.body;
 
@@ -381,7 +419,7 @@ app.put('/api/appointments/:id/cancel', async (req, res) => {
     const result = await pool.query(query, [reason || 'Cancelada por el usuario', id]);
     
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Cita no encontrada o ya estaba cancelada' });
+      return res.status(409).json({ error: 'La cita ya estaba cancelada.' });
     }
 
     const cancelledAppointment = result.rows[0];

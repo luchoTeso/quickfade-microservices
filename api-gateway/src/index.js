@@ -7,9 +7,16 @@ const { rateLimit } = require('express-rate-limit');
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-const BACKEND_URL = process.env.APPOINTMENTS_SERVICE_URL || 'http://127.0.0.1:3001';
+const BACKEND_URL = process.env.APPOINTMENTS_SERVICE_URL || 'http://localhost:3001';
 
-app.use(cors());
+// CORS: solo permitir orígenes configurados (whitelist)
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,http://127.0.0.1:3000').split(',');
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin || allowedOrigins.includes(origin)) cb(null, true);
+    else cb(new Error('Not allowed by CORS'));
+  },
+}));
 
 // Limitador global: Máximo 100 peticiones cada 15 minutos por IP
 const globalLimiter = rateLimit({
@@ -34,8 +41,8 @@ app.get('/health', (req, res) => {
   res.json({ status: 'API Gateway Operativo', port: PORT, protections: 'Rate Limiting Activo' });
 });
 
-// Aplicar rate limiting estricto solo a POST de citas
-app.use('/api/appointments', bookingLimiter);
+// Aplicar rate limiting estricto solo a la CREACIÓN de citas (POST)
+app.post('/api/appointments', bookingLimiter, (req, res, next) => next());
 
 // Proxy: redirige todo /api/* al backend, preservando el path completo.
 // Se monta en '/' con pathFilter para evitar que Express elimine el prefijo '/api'.

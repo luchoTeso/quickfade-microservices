@@ -4,6 +4,7 @@ import { useState } from 'react';
 
 export default function GestionCita() {
   const [appointmentId, setAppointmentId] = useState('');
+  const [token, setToken] = useState('');
   const [appointment, setAppointment] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -14,16 +15,32 @@ export default function GestionCita() {
   const [newDate, setNewDate] = useState('');
   const [newTime, setNewTime] = useState('');
 
+  const handleIdChange = (e) => {
+    const id = e.target.value;
+    setAppointmentId(id);
+    if (id && typeof window !== 'undefined') {
+      const saved = localStorage.getItem(`appt_token_${id}`);
+      if (saved) setToken(saved);
+    }
+  };
+
   const searchAppointment = async (e) => {
     e?.preventDefault();
     if (!appointmentId) return;
-    
+
+    if (!token) {
+      setError('Ingresa el token de acceso de tu cita.');
+      return;
+    }
+
     setIsLoading(true);
     setError('');
     setSuccess('');
-    
+
     try {
-      const res = await fetch(`http://localhost:8080/api/appointments/${appointmentId}`);
+      const res = await fetch(`http://localhost:8080/api/appointments/${appointmentId}`, {
+        headers: { 'X-Appointment-Token': token },
+      });
       if (res.ok) {
         const data = await res.json();
         setAppointment(data);
@@ -47,7 +64,7 @@ export default function GestionCita() {
     try {
       const res = await fetch(`http://localhost:8080/api/appointments/${appointmentId}/cancel`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Appointment-Token': token },
         body: JSON.stringify({ reason: 'Cancelación solicitada por el cliente desde portal de gestión' })
       });
       
@@ -81,12 +98,14 @@ export default function GestionCita() {
       const start = new Date(year, month - 1, day, parseInt(hourStr), parseInt(minStr));
       const end = new Date(start.getTime() + (appointment.duration_minutes * 60000));
 
+      const [hStr, mStr] = newTime.split(':');
       const res = await fetch(`http://localhost:8080/api/appointments/${appointmentId}/reschedule`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          newStartTime: start.toISOString(), 
-          newEndTime: end.toISOString() 
+        headers: { 'Content-Type': 'application/json', 'X-Appointment-Token': token },
+        body: JSON.stringify({
+          newStartTime: start.toISOString(),
+          newEndTime: end.toISOString(),
+          newLocalTime: `${hStr.padStart(2, '0')}:${mStr.padStart(2, '0')}`,
         })
       });
       
@@ -118,21 +137,30 @@ export default function GestionCita() {
       </header>
 
       <div className="w-full max-w-2xl bg-brand-dark2 border border-white/10 rounded-3xl p-8 shadow-2xl relative">
-        <form onSubmit={searchAppointment} className="flex gap-4 mb-8">
-          <input 
-            type="number" 
-            placeholder="Ingresa tu ID de Cita (Ej: 12)" 
-            value={appointmentId}
-            onChange={(e) => setAppointmentId(e.target.value)}
-            className="flex-1 bg-[#1A1A1A] border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-brand-gold transition-colors"
+        <form onSubmit={searchAppointment} className="flex flex-col gap-3 mb-8">
+          <div className="flex gap-4">
+            <input
+              type="number"
+              placeholder="ID de Cita (Ej: 12)"
+              value={appointmentId}
+              onChange={handleIdChange}
+              className="flex-1 bg-[#1A1A1A] border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-brand-gold transition-colors"
+            />
+            <button
+              type="submit"
+              disabled={isLoading || !appointmentId}
+              className="bg-brand-gold text-black font-bold px-6 py-3 rounded-xl hover:bg-white transition-colors disabled:opacity-50"
+            >
+              Buscar
+            </button>
+          </div>
+          <input
+            type="text"
+            placeholder="Token de acceso (se autocompleta si reservaste desde este navegador)"
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            className="w-full bg-[#1A1A1A] border border-white/10 rounded-xl px-4 py-3 text-white text-sm font-mono focus:outline-none focus:border-brand-gold transition-colors"
           />
-          <button 
-            type="submit" 
-            disabled={isLoading || !appointmentId}
-            className="bg-brand-gold text-black font-bold px-6 py-3 rounded-xl hover:bg-white transition-colors disabled:opacity-50"
-          >
-            Buscar
-          </button>
         </form>
 
         {error && (

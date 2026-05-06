@@ -76,6 +76,7 @@ CREATE TABLE appointments (
     deposit_amount DECIMAL(10, 2) DEFAULT 0,
     cancellation_reason TEXT,
     cancelled_at TIMESTAMP WITH TIME ZONE,
+    access_token VARCHAR(40),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -84,9 +85,11 @@ CREATE INDEX idx_appointments_business_time ON appointments(business_id, start_t
 
 -- UNIQUE INDEX PARCIAL: Previene race conditions a nivel de base de datos.
 -- Garantiza que un proveedor NO pueda tener dos citas activas en el mismo horario.
-CREATE UNIQUE INDEX idx_unique_provider_slot 
-  ON appointments(provider_id, start_time_utc) 
+CREATE UNIQUE INDEX idx_unique_provider_slot
+  ON appointments(provider_id, start_time_utc)
   WHERE status IN ('confirmed', 'pending');
+
+CREATE INDEX idx_appointments_token ON appointments(access_token);
 
 -- DATOS DE PRUEBA INICIALES (Mapeado al HTML)
 INSERT INTO countries (code, name, currency, currency_symbol, phone_prefix, default_locale, timezone) VALUES

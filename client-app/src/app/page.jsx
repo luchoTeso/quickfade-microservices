@@ -5,7 +5,7 @@ import { useState, useEffect } from 'react';
 // --- CONFIGURACIÓN DE PAÍSES (i18n Básico y Textos Originales) ---
 const COUNTRIES = {
   CO: {
-    name: 'Colombia', lang: 'es', currency: 'COP', symbol: '$', phone: '+57',
+    name: 'Colombia', lang: 'es', currency: 'COP', symbol: '$', phone: '+57', tz: 'America/Bogota',
     i18n: {
       urgency: '⚡ Alta demanda — Solo quedan {slots} turnos hoy',
       heroTitle: 'Agenda tu Turno<br/>en Segundos',
@@ -32,7 +32,7 @@ const COUNTRIES = {
     }
   },
   FR: {
-    name: 'France', lang: 'fr', currency: 'EUR', symbol: '€', phone: '+33',
+    name: 'France', lang: 'fr', currency: 'EUR', symbol: '€', phone: '+33', tz: 'Europe/Paris',
     i18n: {
       urgency: '⚡ Forte demande — Plus que {slots} créneaux aujourd\'hui',
       heroTitle: 'Réservez votre Rendez-vous<br/>en Quelques Secondes',
@@ -59,7 +59,7 @@ const COUNTRIES = {
     }
   },
   DE: {
-    name: 'Deutschland', lang: 'de', currency: 'EUR', symbol: '€', phone: '+49',
+    name: 'Deutschland', lang: 'de', currency: 'EUR', symbol: '€', phone: '+49', tz: 'Europe/Berlin',
     i18n: {
       urgency: '⚡ Hohe Nachfrage — Nur noch {slots} Termine heute',
       heroTitle: 'Termin buchen<br/>in Sekunden',
@@ -86,7 +86,7 @@ const COUNTRIES = {
     }
   },
   JP: {
-    name: '日本', lang: 'ja', currency: 'JPY', symbol: '¥', phone: '+81',
+    name: '日本', lang: 'ja', currency: 'JPY', symbol: '¥', phone: '+81', tz: 'Asia/Tokyo',
     i18n: {
       urgency: '⚡ 高需要 — 本日残り {slots} 枠のみ',
       heroTitle: '数秒で予約完了<br/>今すぐ予約する',
@@ -113,7 +113,7 @@ const COUNTRIES = {
     }
   },
   US: {
-    name: 'USA', lang: 'en', currency: 'USD', symbol: '$', phone: '+1',
+    name: 'USA', lang: 'en', currency: 'USD', symbol: '$', phone: '+1', tz: 'America/New_York',
     i18n: {
       urgency: '⚡ High Demand — Only {slots} slots left today',
       heroTitle: 'Book Your Appointment<br/>in Seconds',
@@ -192,6 +192,7 @@ export default function Home() {
   const [toast, setToast] = useState(null);
   const [uiError, setUiError] = useState(null); // Nuevo estado para errores elegantes
   const [bookingId, setBookingId] = useState(null);
+  const [accessToken, setAccessToken] = useState(null);
 
   // Calendario
   const [calDate, setCalDate] = useState(new Date());
@@ -261,7 +262,8 @@ export default function Home() {
     if (selectedDate && selectedProvider) {
       const fetchAvailability = async () => {
         try {
-          const res = await fetch(`http://localhost:8080/api/availability?providerId=${selectedProvider.id}&date=${selectedDate}`);
+          const tz = encodeURIComponent(COUNTRIES[country].tz);
+          const res = await fetch(`http://localhost:8080/api/availability?providerId=${selectedProvider.id}&date=${selectedDate}&timezone=${tz}`);
           if (res.ok) {
             const data = await res.json();
             
@@ -384,11 +386,17 @@ export default function Home() {
     const start = new Date(year, month - 1, day, parseInt(hourStr), parseInt(minStr));
     const end = new Date(start.getTime() + selectedService.duration_minutes * 60000);
     
+    if (!customerId) {
+      setUiError('Error: no se pudo identificar al cliente. Por favor regresa al paso anterior.');
+      setIsLoading(false);
+      return;
+    }
+
     const payload = {
       business_id: selectedService.business_id,
       service_id: selectedService.id,
       provider_id: selectedProvider.id,
-      customer_id: customerId || 1,
+      customer_id: customerId,
       startTime: start.toISOString(),
       endTime: end.toISOString()
     };
@@ -403,6 +411,10 @@ export default function Home() {
       if (res.ok) {
         const data = await res.json();
         setBookingId(data.appointment.id);
+        setAccessToken(data.accessToken);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem(`appt_token_${data.appointment.id}`, data.accessToken);
+        }
         setSlotsLeft(prev => Math.max(0, prev - 1));
         setStep(6);
       } else {
@@ -733,10 +745,17 @@ export default function Home() {
               <h2 className="font-serif text-3xl font-bold text-brand-gold mb-2">{t.successTitle}</h2>
               <p className="text-white/50 text-sm mb-6">{t.successSub}</p>
               
-              <div className="bg-brand-dark3 border border-brand-gold/30 font-mono text-brand-gold text-lg tracking-widest rounded-xl py-3 px-6 mb-8 inline-block">
+              <div className="bg-brand-dark3 border border-brand-gold/30 font-mono text-brand-gold text-lg tracking-widest rounded-xl py-3 px-6 mb-4 inline-block">
                 ID: {bookingId}
               </div>
-              
+
+              {accessToken && (
+                <div className="w-full bg-[#1A1A1A] border border-white/10 rounded-xl p-4 mb-6 text-left">
+                  <p className="text-white/40 text-xs mb-1 uppercase tracking-wider">Token de acceso — guárdalo para gestionar tu cita</p>
+                  <p className="font-mono text-xs text-white/80 break-all select-all">{accessToken}</p>
+                </div>
+              )}
+
               <div className="flex flex-col gap-3">
                 <a href={`/gestion`} className="w-full py-4 bg-brand-gold text-black font-bold rounded-xl hover:bg-white transition-all text-center">
                   Gestionar mi Cita
