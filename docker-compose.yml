@@ -11,6 +11,12 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./infrastructure/init.sql:/docker-entrypoint-initdb.d/init.sql
+    # Issue 17: Healthcheck para que los servicios esperen a que Postgres esté listo
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d turnos_reservas"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
   redis:
@@ -20,6 +26,11 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
     restart: unless-stopped
 
   rabbitmq:
@@ -33,6 +44,11 @@ services:
       - "15672:15672" # Interfaz de gestión (UI)
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
     restart: unless-stopped
 
   appointments-service:
@@ -47,10 +63,14 @@ services:
       - RABBITMQ_URL=amqp://user:password@rabbitmq:5672
       - ALLOWED_ORIGINS=http://localhost:3000
     depends_on:
-      - postgres
-      - redis
-      - rabbitmq
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     restart: unless-stopped
+
 
   notifications-service:
     build: ./services/notifications-service
@@ -63,7 +83,22 @@ services:
       - TEST_EMAIL_RECIPIENT=ldiuchep@ucentral.edu.co
       # - RESEND_API_KEY=pon_tu_api_key_aqui
     depends_on:
-      - rabbitmq
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  payments-service:
+    build: ./services/payments-service
+    container_name: turnos_payments
+    ports:
+      - "3003:3003"
+    environment:
+      - PORT=3003
+      - RABBITMQ_URL=amqp://user:password@rabbitmq:5672
+      - ALLOWED_ORIGINS=http://localhost:3000
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
     restart: unless-stopped
 
   api-gateway:
@@ -74,6 +109,7 @@ services:
     environment:
       - PORT=8080
       - APPOINTMENTS_SERVICE_URL=http://appointments-service:3001
+      - PAYMENTS_SERVICE_URL=http://payments-service:3003
       - ALLOWED_ORIGINS=http://localhost:3000
     depends_on:
       - appointments-service

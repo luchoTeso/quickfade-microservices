@@ -43,7 +43,72 @@ async function connectRabbitMQ() {
     const connection = await amqp.connect(process.env.RABBITMQ_URL);
     channel = await connection.createChannel();
     await channel.assertQueue('citas_creadas', { durable: true });
+    await channel.assertQueue('pagos_confirmados', { durable: true });
     console.log('✅ Conectado a RabbitMQ exitosamente.');
+
+    // Consumir eventos de pago exitoso desde payments-service
+    channel.consume('pagos_confirmados', async (msg) => {
+      if (msg !== null) {
+        try {
+          const event = JSON.parse(msg.content.toString());
+          if (event.action === 'PAYMENT_SUCCEEDED') {
+            console.log(`💰 Evento de pago recibido para la cita #${event.appointmentId}`);
+            
+            // Confirmar la cita en la BD
+            const query = `
+              UPDATE appointments 
+              SET status = 'confirmed', payment_status = 'deposit_paid'
+              WHERE id = $1 AND status = 'pending'
+              RETURNING *;
+            `;
+            const result = await pool.query(query, [event.appointmentId]);
+            
+            if (result.rows.length > 0) {
+              const appt = result.rows[0];
+
+              // Consumir premio de lealtad si correspondía (esto asume que se cobró, pero en este caso no era gratis)
+              // Aquí actualizamos la visita
+              await pool.query(`
+                UPDATE customers 
+                SET visit_count = visit_count + 1,
+                    has_free_appointment = CASE 
+                      WHEN (visit_count + 1) > 0 AND (visit_count + 1) % 7 = 0 THEN true
+                      ELSE has_free_appointment 
+                    END
+                WHERE id = $1
+              `, [appt.customer_id]);
+
+              // Publicar a notificaciones
+              const emailEvent = {
+                action: 'CREATED',
+                appointmentId: appt.id,
+                customerId: appt.customer_id,
+                businessId: appt.business_id,
+                startTime: appt.start_time_utc,
+                status: 'confirmed'
+              };
+              channel.sendToQueue('citas_creadas', Buffer.from(JSON.stringify(emailEvent)));
+              console.log(`✅ Cita confirmada tras pago, notificación enviada.`);
+            }
+          }
+          channel.ack(msg);
+        } catch (err) {
+          console.error('Error procesando pago confirmado:', err);
+          channel.nack(msg, false, false);
+        }
+      }
+    });
+
+    // Issue 16: Reconectar automáticamente si la conexión se pierde
+    connection.on('error', (err) => {
+      console.error('❌ Conexión RabbitMQ perdida:', err.message);
+      channel = null;
+    });
+    connection.on('close', () => {
+      console.warn('⚠️ Conexión RabbitMQ cerrada. Reintentando en 5s...');
+      channel = null;
+      setTimeout(connectRabbitMQ, 5000);
+    });
   } catch (error) {
     console.error('❌ Error conectando a RabbitMQ:', error.message);
     setTimeout(connectRabbitMQ, 5000); // Reintentar
@@ -86,6 +151,22 @@ app.get('/health', (req, res) => {
 app.post('/api/appointments', async (req, res) => {
   const { business_id, service_id, provider_id, customer_id, startTime, endTime } = req.body;
 
+  // Issue 13: Validación server-side de campos requeridos y tipos
+  if (!business_id || !service_id || !provider_id || !customer_id || !startTime || !endTime) {
+    return res.status(400).json({ error: 'Faltan campos obligatorios: business_id, service_id, provider_id, customer_id, startTime, endTime.' });
+  }
+  const start = new Date(startTime);
+  const end = new Date(endTime);
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+    return res.status(400).json({ error: 'startTime o endTime no son fechas válidas.' });
+  }
+  if (end <= start) {
+    return res.status(400).json({ error: 'endTime debe ser posterior a startTime.' });
+  }
+  if (start <= new Date()) {
+    return res.status(400).json({ error: 'No se pueden crear citas en el pasado.' });
+  }
+
   try {
     // 0. Validar que el proveedor ofrezca este servicio y que ambos pertenezcan al mismo negocio
     const psCheck = await pool.query(
@@ -104,12 +185,18 @@ app.post('/api/appointments', async (req, res) => {
     //    El UNIQUE INDEX (provider_id, start_time_utc) WHERE status IN (...)
     //    garantiza que dos inserciones simultáneas NO puedan crear duplicados.
     const accessToken = crypto.randomBytes(20).toString('hex');
+    // Issue 9 y Pasarela de Pagos: Determinar payment_status según lealtad
+    const custCheck = await pool.query('SELECT has_free_appointment FROM customers WHERE id = $1', [customer_id]);
+    const isFreeByLoyalty = custCheck.rows[0]?.has_free_appointment || false;
+    const paymentStatus = isFreeByLoyalty ? 'free_loyalty' : 'pending';
+    const initialStatus = isFreeByLoyalty ? 'confirmed' : 'pending';
+
     const query = `
-      INSERT INTO appointments (business_id, service_id, provider_id, customer_id, start_time_utc, end_time_utc, status, access_token)
-      VALUES ($1, $2, $3, $4, $5, $6, 'confirmed', $7)
+      INSERT INTO appointments (business_id, service_id, provider_id, customer_id, start_time_utc, end_time_utc, status, access_token, payment_status)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       RETURNING *;
     `;
-    const values = [business_id, service_id, provider_id, customer_id, startTime, endTime, accessToken];
+    const values = [business_id, service_id, provider_id, customer_id, startTime, endTime, initialStatus, accessToken, paymentStatus];
     
     let result;
     try {
@@ -123,44 +210,44 @@ app.post('/api/appointments', async (req, res) => {
     }
     const newAppointment = result.rows[0];
     
-    // 2. Eliminar el candado temporal de Redis ahora que el turno es permanente
-    const dateObj = new Date(startTime);
-    const dateStr = dateObj.toISOString().split('T')[0];
-    const timeStr = dateObj.toISOString().substring(11, 16);
-    await redisClient.del(`lock:${provider_id}:${dateStr}:${timeStr}`);
-
-    // 3. Publicar evento en RabbitMQ para notificar al cliente
-    if (channel) {
-      const eventData = {
-        action: 'CREATED',
-        appointmentId: newAppointment.id,
-        customerId: customer_id,
-        businessId: business_id,
-        startTime: startTime,
-        status: 'confirmed'
-      };
-      channel.sendToQueue('citas_creadas', Buffer.from(JSON.stringify(eventData)));
-      console.log(`📨 Evento publicado en RabbitMQ: citas_creadas (ID: ${newAppointment.id})`);
-    } else {
-      console.error('⚠️ Canal de RabbitMQ no disponible, el evento no se publicó.');
+    // 2. Eliminar el candado temporal de Redis SOLO si la cita es gratis. 
+    // Si no es gratis, el candado se mantiene 10 minutos esperando el pago para proteger el slot.
+    if (isFreeByLoyalty) {
+      const dateObj = new Date(startTime);
+      const dateStr = dateObj.toISOString().split('T')[0];
+      const timeStr = dateObj.toISOString().substring(11, 16);
+      await redisClient.del(`lock:${provider_id}:${dateStr}:${timeStr}`);
     }
 
-    // 4. Actualizar fidelización: sumar visita, y SOLO consumir el premio si la cita actual era gratuita
-    const customerData = await pool.query('SELECT has_free_appointment FROM customers WHERE id = $1', [customer_id]);
-    const wasFree = customerData.rows[0]?.has_free_appointment || false;
-    
-    await pool.query(`
-      UPDATE customers 
-      SET visit_count = visit_count + 1,
-          has_free_appointment = CASE WHEN has_free_appointment = true THEN false ELSE has_free_appointment END
-      WHERE id = $1
-    `, [customer_id]);
+    // 3. Publicar evento y actualizar lealtad SOLO si la cita quedó confirmada (gratis)
+    if (initialStatus === 'confirmed') {
+      if (channel) {
+        const eventData = {
+          action: 'CREATED',
+          appointmentId: newAppointment.id,
+          customerId: customer_id,
+          businessId: business_id,
+          startTime: startTime,
+          status: 'confirmed'
+        };
+        channel.sendToQueue('citas_creadas', Buffer.from(JSON.stringify(eventData)));
+        console.log(`📨 Evento publicado en RabbitMQ: citas_creadas (ID: ${newAppointment.id})`);
+      }
+
+      await pool.query(`
+        UPDATE customers 
+        SET visit_count = visit_count + 1,
+            has_free_appointment = false
+        WHERE id = $1
+      `, [customer_id]);
+    }
 
     res.status(201).json({
-      message: '¡Cita creada con éxito!',
+      message: initialStatus === 'confirmed' ? '¡Cita confirmada con éxito!' : 'Cita pre-reservada, esperando pago',
       appointment: newAppointment,
       accessToken: newAppointment.access_token,
-      loyaltyUsed: wasFree
+      loyaltyUsed: isFreeByLoyalty,
+      requiresPayment: !isFreeByLoyalty
     });
   } catch (error) {
     console.error('Error al crear cita:', error);
@@ -409,6 +496,9 @@ app.put('/api/appointments/:id/cancel', validateAppointmentToken, async (req, re
   const { id } = req.params;
   const { reason } = req.body;
 
+  // Issue 13: Limitar longitud del motivo de cancelación
+  const safeReason = (reason || 'Cancelada por el usuario').substring(0, 500);
+
   try {
     const query = `
       UPDATE appointments 
@@ -416,13 +506,19 @@ app.put('/api/appointments/:id/cancel', validateAppointmentToken, async (req, re
       WHERE id = $2 AND status != 'cancelled'
       RETURNING *;
     `;
-    const result = await pool.query(query, [reason || 'Cancelada por el usuario', id]);
+    const result = await pool.query(query, [safeReason, id]);
     
     if (result.rows.length === 0) {
       return res.status(409).json({ error: 'La cita ya estaba cancelada.' });
     }
 
     const cancelledAppointment = result.rows[0];
+
+    // Issue 18: Liberar el lock de Redis del horario cancelado (si existe)
+    const cancelDateObj = new Date(cancelledAppointment.start_time_utc);
+    const cancelDateStr = cancelDateObj.toISOString().split('T')[0];
+    const cancelTimeStr = cancelDateObj.toISOString().substring(11, 16);
+    await redisClient.del(`lock:${cancelledAppointment.provider_id}:${cancelDateStr}:${cancelTimeStr}`);
 
     // Publicar evento CANCELLED en RabbitMQ
     if (channel) {
@@ -432,7 +528,6 @@ app.put('/api/appointments/:id/cancel', validateAppointmentToken, async (req, re
         customerId: cancelledAppointment.customer_id,
         startTime: cancelledAppointment.start_time_utc,
       };
-      // Usamos la misma cola por conveniencia, el worker diferenciará por action
       channel.sendToQueue('citas_creadas', Buffer.from(JSON.stringify(eventData)));
     }
 
@@ -457,9 +552,10 @@ app.get('/api/analytics', async (req, res) => {
     const revResult = await pool.query(revQuery);
     
     // 2. Clientes y Lealtad
+    // Issue 14: Umbral consistente con la regla de negocio (cada 7 visitas)
     const cusQuery = `
       SELECT COUNT(id) as total_customers, 
-             SUM(CASE WHEN visit_count >= 6 THEN 1 ELSE 0 END) as loyal_customers
+             SUM(CASE WHEN visit_count >= 7 THEN 1 ELSE 0 END) as loyal_customers
       FROM customers;
     `;
     const cusResult = await pool.query(cusQuery);

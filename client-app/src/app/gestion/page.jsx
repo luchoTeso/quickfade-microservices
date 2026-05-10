@@ -1,6 +1,9 @@
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+
+// Issue 19: URL centralizada
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
 export default function GestionCita() {
   const [appointmentId, setAppointmentId] = useState('');
@@ -14,6 +17,52 @@ export default function GestionCita() {
   const [isRescheduling, setIsRescheduling] = useState(false);
   const [newDate, setNewDate] = useState('');
   const [newTime, setNewTime] = useState('');
+  
+  // Nuevo estado para la confirmación de pago
+  const [justPaid, setJustPaid] = useState(false);
+
+  // Auto-cargar si viene redirigido del pago exitoso
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      const isSuccess = urlParams.get('success');
+      const paramId = urlParams.get('id');
+
+      if (isSuccess === 'true' && paramId) {
+        setAppointmentId(paramId);
+        setJustPaid(true);
+        
+        // Limpiar la URL visualmente sin recargar la página
+        window.history.replaceState({}, document.title, "/gestion");
+
+        const savedToken = localStorage.getItem(`appt_token_${paramId}`);
+        if (savedToken) {
+          setToken(savedToken);
+          // Buscamos automáticamente para mostrarle sus datos
+          searchAppointmentAuto(paramId, savedToken);
+        } else {
+          setError(`No encontramos el token de seguridad para la cita #${paramId} en este navegador. Por favor ingrésalo manualmente si lo copiaste antes.`);
+        }
+      }
+    }
+  }, []);
+
+  const searchAppointmentAuto = async (id, currentToken) => {
+    setIsLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/api/appointments/${id}`, {
+        headers: { 'X-Appointment-Token': currentToken },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAppointment(data);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleIdChange = (e) => {
     const id = e.target.value;
@@ -38,7 +87,7 @@ export default function GestionCita() {
     setSuccess('');
 
     try {
-      const res = await fetch(`http://localhost:8080/api/appointments/${appointmentId}`, {
+      const res = await fetch(`${API_URL}/api/appointments/${appointmentId}`, {
         headers: { 'X-Appointment-Token': token },
       });
       if (res.ok) {
@@ -62,7 +111,7 @@ export default function GestionCita() {
     
     setIsLoading(true);
     try {
-      const res = await fetch(`http://localhost:8080/api/appointments/${appointmentId}/cancel`, {
+      const res = await fetch(`${API_URL}/api/appointments/${appointmentId}/cancel`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'X-Appointment-Token': token },
         body: JSON.stringify({ reason: 'Cancelación solicitada por el cliente desde portal de gestión' })
@@ -99,7 +148,7 @@ export default function GestionCita() {
       const end = new Date(start.getTime() + (appointment.duration_minutes * 60000));
 
       const [hStr, mStr] = newTime.split(':');
-      const res = await fetch(`http://localhost:8080/api/appointments/${appointmentId}/reschedule`, {
+      const res = await fetch(`${API_URL}/api/appointments/${appointmentId}/reschedule`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'X-Appointment-Token': token },
         body: JSON.stringify({
@@ -132,12 +181,47 @@ export default function GestionCita() {
   return (
     <div className="min-h-screen bg-[#0D0D0D] p-6 sm:p-12 font-sans text-white flex flex-col items-center">
       <header className="mb-10 text-center w-full max-w-2xl">
-        <h1 className="text-4xl font-serif font-bold text-gradient mb-2">Gestionar mi Cita</h1>
-        <p className="text-white/50">Consulta, reprograma o cancela tu turno en QuickFade</p>
+        {justPaid ? (
+          <div className="animate-fade-in text-center py-6 mb-6">
+            <div className="text-6xl mb-4 animate-[bounce_1s_infinite]">🎉</div>
+            <h1 className="text-4xl font-serif font-bold text-brand-gold mb-2">¡Pago Confirmado!</h1>
+            <p className="text-white/80">Tu abono del 50% ha sido procesado exitosamente por dLocal Go.</p>
+          </div>
+        ) : (
+          <>
+            <h1 className="text-4xl font-serif font-bold text-gradient mb-2">Gestionar mi Cita</h1>
+            <p className="text-white/50">Consulta, reprograma o cancela tu turno en QuickFade</p>
+          </>
+        )}
       </header>
 
       <div className="w-full max-w-2xl bg-brand-dark2 border border-white/10 rounded-3xl p-8 shadow-2xl relative">
-        <form onSubmit={searchAppointment} className="flex flex-col gap-3 mb-8">
+        
+        {justPaid && (
+          <div className="mb-8 p-5 bg-gradient-to-br from-brand-gold/10 to-[#A87A20]/20 border border-brand-gold/30 rounded-2xl animate-fade-in text-center">
+            <p className="text-sm font-semibold text-brand-gold mb-3 uppercase tracking-wider">Tus datos de acceso</p>
+            <div className="flex justify-center gap-4 mb-4">
+              <div className="bg-black/50 px-4 py-2 rounded-lg">
+                <span className="text-white/40 text-xs block">ID Cita</span>
+                <span className="font-mono text-brand-gold text-lg">{appointmentId}</span>
+              </div>
+            </div>
+            {token ? (
+              <>
+                <p className="text-xs text-white/60 mb-2">Token de seguridad (Guárdalo)</p>
+                <div className="bg-black/50 font-mono text-xs text-white/80 break-all select-all px-4 py-3 rounded-lg border border-white/5">
+                  {token}
+                </div>
+                <p className="text-[10px] text-white/40 mt-3">* El token se ha guardado automáticamente en este navegador.</p>
+              </>
+            ) : (
+              <p className="text-xs text-brand-gold mb-2">Procesando token de seguridad...</p>
+            )}
+          </div>
+        )}
+
+        {!justPaid && (
+          <form onSubmit={searchAppointment} className="flex flex-col gap-3 mb-8">
           <div className="flex gap-4">
             <input
               type="number"
@@ -162,6 +246,7 @@ export default function GestionCita() {
             className="w-full bg-[#1A1A1A] border border-white/10 rounded-xl px-4 py-3 text-white text-sm font-mono focus:outline-none focus:border-brand-gold transition-colors"
           />
         </form>
+        )}
 
         {error && (
           <div className="mb-6 bg-red-500/10 border border-red-500/30 text-red-400 px-4 py-3 rounded-xl text-sm">

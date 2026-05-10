@@ -3,6 +3,8 @@
 import { useState, useEffect } from 'react';
 
 // --- CONFIGURACIÓN DE PAÍSES (i18n Básico y Textos Originales) ---
+// Issue 19: URL centralizada — en despliegue se configura con NEXT_PUBLIC_API_URL
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 const COUNTRIES = {
   CO: {
     name: 'Colombia', lang: 'es', currency: 'COP', symbol: '$', phone: '+57', tz: 'America/Bogota',
@@ -211,7 +213,7 @@ export default function Home() {
   useEffect(() => {
     const fetchServices = async () => {
       try {
-        const res = await fetch(`http://localhost:8080/api/services/${country}`);
+        const res = await fetch(`${API_URL}/api/services/${country}`);
         if (res.ok) {
           const data = await res.json();
           setServices(data);
@@ -236,7 +238,7 @@ export default function Home() {
 
   const fetchProviders = async (businessId) => {
     try {
-      const res = await fetch(`http://localhost:8080/api/providers/${businessId}`);
+      const res = await fetch(`${API_URL}/api/providers/${businessId}`);
       if (res.ok) {
         const data = await res.json();
         setProviders(data);
@@ -263,7 +265,7 @@ export default function Home() {
       const fetchAvailability = async () => {
         try {
           const tz = encodeURIComponent(COUNTRIES[country].tz);
-          const res = await fetch(`http://localhost:8080/api/availability?providerId=${selectedProvider.id}&date=${selectedDate}&timezone=${tz}`);
+          const res = await fetch(`${API_URL}/api/availability?providerId=${selectedProvider.id}&date=${selectedDate}&timezone=${tz}`);
           if (res.ok) {
             const data = await res.json();
             
@@ -296,7 +298,7 @@ export default function Home() {
     if (step === 3) {
       setIsLoading(true);
       try {
-        const res = await fetch('http://localhost:8080/api/lock-slot', {
+        const res = await fetch(`${API_URL}/api/lock-slot`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ providerId: selectedProvider.id, date: selectedDate, time: selectedTime })
@@ -354,7 +356,7 @@ export default function Home() {
 
       setIsLoading(true);
       try {
-        const res = await fetch('http://localhost:8080/api/customers/lookup', {
+        const res = await fetch(`${API_URL}/api/customers/lookup`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -387,7 +389,7 @@ export default function Home() {
     const end = new Date(start.getTime() + selectedService.duration_minutes * 60000);
     
     if (!customerId) {
-      setUiError('Error: no se pudo identificar al cliente. Por favor regresa al paso anterior.');
+      setUiError('Error: no se pudo identificar al cliente. Por favor regresa al paso anterior e ingresa tus datos nuevamente.');
       setIsLoading(false);
       return;
     }
@@ -402,7 +404,7 @@ export default function Home() {
     };
 
     try {
-      const res = await fetch('http://localhost:8080/api/appointments', {
+      const res = await fetch(`${API_URL}/api/appointments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -410,11 +412,42 @@ export default function Home() {
       
       if (res.ok) {
         const data = await res.json();
-        setBookingId(data.appointment.id);
-        setAccessToken(data.accessToken);
+        
         if (typeof window !== 'undefined') {
           localStorage.setItem(`appt_token_${data.appointment.id}`, data.accessToken);
         }
+
+        if (data.requiresPayment) {
+          // Fase 3: Solicitar link de pago a dLocal Go (Cobro del 50% de anticipo)
+          const depositAmount = selectedService.price * 0.5;
+          const payPayload = {
+            appointmentId: data.appointment.id,
+            amount: depositAmount,
+            currency: COUNTRIES[country].currency,
+            country: country,
+            description: `Abono anticipo (50%) - ${selectedService.name}`,
+            customerEmail: "cliente@email.com"
+          };
+          
+          const payRes = await fetch(`${API_URL}/api/payments/checkout`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payPayload)
+          });
+          
+          if (payRes.ok) {
+            const payData = await payRes.json();
+            // Redirigir a la pasarela (dLocal Go)
+            window.location.href = payData.checkoutUrl;
+            return;
+          } else {
+            setUiError('La cita se reservó pero falló la conexión con la pasarela de pagos.');
+          }
+        }
+
+        // Si es gratis por lealtad, mostrar pantalla de éxito directamente
+        setBookingId(data.appointment.id);
+        setAccessToken(data.accessToken);
         setSlotsLeft(prev => Math.max(0, prev - 1));
         setStep(6);
       } else {

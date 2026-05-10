@@ -8,6 +8,7 @@ const app = express();
 const PORT = process.env.PORT || 8080;
 
 const BACKEND_URL = process.env.APPOINTMENTS_SERVICE_URL || 'http://localhost:3001';
+const PAYMENTS_URL = process.env.PAYMENTS_SERVICE_URL || 'http://localhost:3003';
 
 // CORS: solo permitir orígenes configurados (whitelist)
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,http://127.0.0.1:3000').split(',');
@@ -44,17 +45,25 @@ app.get('/health', (req, res) => {
 // Aplicar rate limiting estricto solo a la CREACIÓN de citas (POST)
 app.post('/api/appointments', bookingLimiter, (req, res, next) => next());
 
-// Proxy: redirige todo /api/* al backend, preservando el path completo.
-// Se monta en '/' con pathFilter para evitar que Express elimine el prefijo '/api'.
+// Proxy: Redirige tráfico de pagos al payments-service
+const paymentsProxy = createProxyMiddleware({
+  target: PAYMENTS_URL,
+  changeOrigin: true,
+  pathFilter: (path) => path.startsWith('/api/payments') || path.startsWith('/api/webhooks'),
+});
+app.use(paymentsProxy);
+
+// Proxy: redirige el resto de /api/* al appointments-service
 const apiProxy = createProxyMiddleware({
   target: BACKEND_URL,
   changeOrigin: true,
-  pathFilter: '/api/**',
+  pathFilter: (path) => path.startsWith('/api/') && !path.startsWith('/api/payments') && !path.startsWith('/api/webhooks'),
 });
 app.use(apiProxy);
 
 app.listen(PORT, () => {
   console.log(`🌐 API Gateway escuchando en el puerto ${PORT}`);
-  console.log(`🔀 Redirigiendo tráfico /api/* hacia ${BACKEND_URL}`);
+  console.log(`🔀 Redirigiendo tráfico de turnos hacia ${BACKEND_URL}`);
+  console.log(`🔀 Redirigiendo tráfico de pagos hacia ${PAYMENTS_URL}`);
 });
 

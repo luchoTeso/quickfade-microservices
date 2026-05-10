@@ -2,6 +2,9 @@
 
 import { useState, useEffect } from 'react';
 
+// Issue 19: URL centralizada
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+
 export default function AdminDashboard() {
   const [data, setData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -9,7 +12,7 @@ export default function AdminDashboard() {
   useEffect(() => {
     const fetchAnalytics = async () => {
       try {
-        const res = await fetch('http://localhost:8080/api/analytics');
+        const res = await fetch(`${API_URL}/api/analytics`);
         if (res.ok) {
           const result = await res.json();
           setData(result);

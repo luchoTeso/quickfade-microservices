@@ -8,6 +8,10 @@ const pool = new Pool({
 
 console.log('🚀 Iniciando Notifications Service...');
 
+// Issue 11: Set de IDs procesados para evitar correos duplicados en reentregas de RabbitMQ
+const processedEvents = new Set();
+const MAX_PROCESSED_CACHE = 10000; // Evitar memory leak en ejecuciones largas
+
 // Funciones para enviar notificaciones simuladas
 const sendWhatsApp = (phone, message) => {
   console.log('\n=========================================');
@@ -74,11 +78,31 @@ async function startWorker() {
 
     console.log(`🎧 Worker de notificaciones escuchando en la cola: ${queue}`);
 
+    // Issue 16: Reconectar si la conexión se pierde
+    connection.on('error', (err) => console.error('❌ Conexión RabbitMQ perdida:', err.message));
+    connection.on('close', () => {
+      console.warn('⚠️ Conexión RabbitMQ cerrada. Reintentando en 5s...');
+      setTimeout(startWorker, 5000);
+    });
+
     channel.consume(queue, async (msg) => {
       if (msg !== null) {
         try {
           const event = JSON.parse(msg.content.toString());
           console.log(`📨 Recibido evento: ${queue}`, event);
+
+          // Issue 11: Deduplicación — evitar procesar el mismo evento dos veces
+          const eventKey = `${event.action}:${event.appointmentId}`;
+          if (processedEvents.has(eventKey)) {
+            console.log(`⚠️ Evento duplicado detectado (${eventKey}), ignorando.`);
+            channel.ack(msg);
+            return;
+          }
+          processedEvents.add(eventKey);
+          if (processedEvents.size > MAX_PROCESSED_CACHE) {
+            const first = processedEvents.values().next().value;
+            processedEvents.delete(first);
+          }
 
           // Consultar datos adicionales necesarios para la notificación (Cliente y Servicio)
           const query = `
@@ -140,9 +164,9 @@ async function startWorker() {
               }
             }
 
-            // Simular envío
+            // Issue 12: Esperar el envío del correo antes de hacer ACK
             sendWhatsApp(data.phone_number, waMsg);
-            sendEmail(data.email, emailMsg);
+            await sendEmail(data.email, emailMsg);
           }
 
           // Confirmar que procesamos el mensaje (Acknowledge)
