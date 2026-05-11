@@ -1,0 +1,20 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'api-gateway'
+    static_configs:
+      - targets: ['api-gateway:8080']
+
+  - job_name: 'appointments-service'
+    static_configs:
+      - targets: ['appointments-service:3001']
+
+  - job_name: 'payments-service'
+    static_configs:
+      - targets: ['payments-service:3003']
+
+  - job_name: 'notifications-service'
+    static_configs:
+      - targets: ['notifications-service:3004']

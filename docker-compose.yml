@@ -1,4 +1,7 @@
 services:
+  # ============================================================
+  # INFRAESTRUCTURA BASE
+  # ============================================================
   postgres:
     image: postgres:15-alpine
     container_name: turnos_db
@@ -7,13 +10,12 @@ services:
       POSTGRES_PASSWORD: password
       POSTGRES_DB: turnos_reservas
     ports:
-      - "5432:5432"
+      - "5433:5432"  # Host 5433 → Container 5432 (evita conflicto con PostgreSQL local)
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./infrastructure/init.sql:/docker-entrypoint-initdb.d/init.sql
-    # Issue 17: Healthcheck para que los servicios esperen a que Postgres esté listo
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U user -d turnos_reservas"]
+      test: [ "CMD-SHELL", "pg_isready -U user -d turnos_reservas" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -27,7 +29,7 @@ services:
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -40,17 +42,61 @@ services:
       RABBITMQ_DEFAULT_USER: user
       RABBITMQ_DEFAULT_PASS: password
     ports:
-      - "5672:5672"   # Puerto de la cola
-      - "15672:15672" # Interfaz de gestión (UI)
+      - "5672:5672"
+      - "15672:15672" # Management UI: http://localhost:15672
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      test: [ "CMD", "rabbitmq-diagnostics", "-q", "ping" ]
       interval: 10s
       timeout: 10s
       retries: 5
     restart: unless-stopped
 
+  # ============================================================
+  # OBSERVABILIDAD — Jaeger + Prometheus + Grafana
+  # ============================================================
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    container_name: turnos_jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686" # Jaeger UI:      http://localhost:16686
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: turnos_prometheus
+    ports:
+      - "9090:9090" # Prometheus UI:  http://localhost:9090
+    volumes:
+      - ./infrastructure/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=7d'
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.3.0
+    container_name: turnos_grafana
+    ports:
+      - "3002:3000" # Grafana UI:     http://localhost:3002  (user: admin / pass: admin)
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infrastructure/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  # ============================================================
+  # MICROSERVICIOS
+  # ============================================================
   appointments-service:
     build: ./services/appointments-service
     container_name: turnos_appointments
@@ -62,6 +108,7 @@ services:
       - REDIS_URL=redis://redis:6379
       - RABBITMQ_URL=amqp://user:password@rabbitmq:5672
       - ALLOWED_ORIGINS=http://localhost:3000
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
     depends_on:
       postgres:
         condition: service_healthy
@@ -71,17 +118,19 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-
   notifications-service:
     build: ./services/notifications-service
     container_name: turnos_notifications
+    ports:
+      - "3004:3004" # Health/Metrics: http://localhost:3004/health
     environment:
       - RABBITMQ_URL=amqp://user:password@rabbitmq:5672
       - DATABASE_URL=postgres://user:password@postgres:5432/turnos_reservas
       - NODE_ENV=development
-      # Solo activo en desarrollo. Comentar en producción para enviar al cliente real.
+      - HEALTH_PORT=3004
       - TEST_EMAIL_RECIPIENT=ldiuchep@ucentral.edu.co
       # - RESEND_API_KEY=pon_tu_api_key_aqui
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -96,6 +145,13 @@ services:
       - PORT=3003
       - RABBITMQ_URL=amqp://user:password@rabbitmq:5672
       - ALLOWED_ORIGINS=http://localhost:3000
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
+      - FRONTEND_URL=http://localhost:3000
+      - WEBHOOK_BASE_URL=http://api-gateway:8080
+      # Para integración REAL con dLocal Go sandbox
+      #- DLOCAL_API_KEY=VsKiQKFuzVyEirJtYGoYpeTtXSuXLlEw
+      #- DLOCAL_SECRET_KEY=23VBG4WKIt1Xv11VnWa8FjbtWWmRFAELbfzDSAPB
+      # - DLOCAL_BASE_URL=https://api-sbx.dlocalgo.com
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -111,6 +167,7 @@ services:
       - APPOINTMENTS_SERVICE_URL=http://appointments-service:3001
       - PAYMENTS_SERVICE_URL=http://payments-service:3003
       - ALLOWED_ORIGINS=http://localhost:3000
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
     depends_on:
       - appointments-service
     restart: unless-stopped
@@ -128,3 +185,4 @@ volumes:
   postgres_data:
   redis_data:
   rabbitmq_data:
+  grafana_data:
