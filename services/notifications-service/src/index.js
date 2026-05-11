@@ -74,13 +74,13 @@ const sendEmail = async (email, message) => {
         ? process.env.TEST_EMAIL_RECIPIENT
         : email;
       const { data, error } = await resend.emails.send({
-        from: 'QuickFade <onboarding@resend.dev>',
+        from: 'QuickStyle <onboarding@resend.dev>',
         to,
-        subject: '💇‍♂️ Confirmación de tu Reserva - QuickFade',
+        subject: '💇‍♂️ Confirmación de tu Reserva - QuickStyle',
         html: `<div style="font-family:sans-serif;padding:20px;background:#0D0D0D;color:white;border:1px solid #C9A84C;border-radius:10px;">
                  <h2 style="color:#C9A84C;">¡Turno Confirmado!</h2>
                  <p>${message}</p>
-                 <p style="color:gray;font-size:12px;">Mensaje automatizado - QuickFade Microservices.</p>
+                 <p style="color:gray;font-size:12px;">Mensaje automatizado - QuickStyle Microservices.</p>
                </div>`,
       });
       if (error) console.error('❌ Resend error:', error);
@@ -177,13 +177,13 @@ async function startWorker() {
           if (action === 'CREATED') {
             if (data.preferred_locale === 'fr') {
               waMsg    = `Salut ${data.customer_name} ! Votre rendez-vous pour ${data.service_name} chez ${data.business_name} est confirmé pour le ${formattedDate} à ${formattedTime}. ID: #${event.appointmentId}`;
-              emailMsg = `Rendez-vous confirmé. Merci d'avoir choisi QuickFade ${data.country_name}.`;
+              emailMsg = `Rendez-vous confirmé. Merci d'avoir choisi QuickStyle ${data.country_name}.`;
             } else if (data.preferred_locale === 'en') {
               waMsg    = `Hi ${data.customer_name}! Your appointment for ${data.service_name} at ${data.business_name} is confirmed for ${formattedDate} at ${formattedTime}. ID: #${event.appointmentId}`;
-              emailMsg = `Appointment confirmed. Thanks for choosing QuickFade ${data.country_name}.`;
+              emailMsg = `Appointment confirmed. Thanks for choosing QuickStyle ${data.country_name}.`;
             } else {
               waMsg    = `¡Hola ${data.customer_name}! Tu cita para ${data.service_name} en ${data.business_name} está confirmada para el ${formattedDate} a las ${formattedTime}. ID: #${event.appointmentId}`;
-              emailMsg = `Cita confirmada. Gracias por elegir QuickFade ${data.country_name}.`;
+              emailMsg = `Cita confirmada. Gracias por elegir QuickStyle ${data.country_name}.`;
             }
           } else if (action === 'RESCHEDULED') {
             if (data.preferred_locale === 'fr') {

@@ -1,4 +1,4 @@
-# Plan: Corrección de 7 hallazgos críticos en QuickFade
+# Plan: Corrección de 7 hallazgos críticos en QuickStyle
 
 ## Context
 

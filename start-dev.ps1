@@ -1,5 +1,5 @@
 Write-Host "=========================================" -ForegroundColor Cyan
-Write-Host "🚀 Iniciando Entorno de Desarrollo QuickFade" -ForegroundColor Cyan
+Write-Host "🚀 Iniciando Entorno de Desarrollo QuickStyle" -ForegroundColor Cyan
 Write-Host "=========================================" -ForegroundColor Cyan
 
 # Usamos npx para ejecutar concurrently sin tener que instalarlo globalmente

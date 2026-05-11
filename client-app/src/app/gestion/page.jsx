@@ -190,7 +190,7 @@ export default function GestionCita() {
         ) : (
           <>
             <h1 className="text-4xl font-serif font-bold text-gradient mb-2">Gestionar mi Cita</h1>
-            <p className="text-white/50">Consulta, reprograma o cancela tu turno en QuickFade</p>
+            <p className="text-white/50">Consulta, reprograma o cancela tu turno en QuickStyle</p>
           </>
         )}
       </header>

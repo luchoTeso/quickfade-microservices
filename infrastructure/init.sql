@@ -100,11 +100,11 @@ INSERT INTO countries (code, name, currency, currency_symbol, phone_prefix, defa
 ('US', 'USA', 'USD', '$', '+1', 'en', 'America/New_York');
 
 INSERT INTO businesses (country_code, name, phone_number) VALUES
-('CO', 'QuickFade Bogotá', '+573001234567'),
-('FR', 'QuickFade Paris', '+33123456789'),
-('DE', 'QuickFade Berlin', '+49123456789'),
-('JP', 'QuickFade Tokyo', '+81123456789'),
-('US', 'QuickFade NY', '+11234567890');
+('CO', 'QuickStyle Bogotá', '+573001234567'),
+('FR', 'QuickStyle Paris', '+33123456789'),
+('DE', 'QuickStyle Berlin', '+49123456789'),
+('JP', 'QuickStyle Tokyo', '+81123456789'),
+('US', 'QuickStyle NY', '+11234567890');
 
 -- Insertar servicios para Colombia (business_id = 1)
 INSERT INTO services (business_id, name, icon, duration_minutes, price, is_popular) VALUES

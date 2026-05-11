@@ -1,7 +1,7 @@
 apiVersion: 1
 
 providers:
-  - name: QuickFade
+  - name: QuickStyle
     orgId: 1
     type: file
     disableDeletion: false

@@ -124,7 +124,7 @@ app.post('/api/payments/checkout', async (req, res) => {
         amount:           parseFloat(amount),
         currency:         currency,
         country:          country,
-        description:      description || `Reserva QuickFade #${appointmentId}`,
+        description:      description || `Reserva QuickStyle #${appointmentId}`,
         payer:            { email: customerEmail },
         notification_url: `${WEBHOOK_BASE_URL}/api/webhooks/payments`,
         success_url:      `${FRONTEND_URL}/gestion?appt=${appointmentId}`,

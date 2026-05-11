@@ -1,6 +1,6 @@
-# ✂️ QuickFade - Sistema de Turnos y Reservas (Microservicios)
+# ✂️ QuickStyle - Sistema de Turnos y Reservas (Microservicios)
 
-¡Bienvenido al repositorio de QuickFade! Este proyecto es una solución completa y profesional para el agendamiento de citas, construido sobre una arquitectura de **microservicios distribuidos**.
+¡Bienvenido al repositorio de QuickStyle! Este proyecto es una solución completa y profesional para el agendamiento de citas, construido sobre una arquitectura de **microservicios distribuidos**.
 
 ## 🏗️ Arquitectura del Sistema
 - **Frontend:** Next.js (React) + TailwindCSS

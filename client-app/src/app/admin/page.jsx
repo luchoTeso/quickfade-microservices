@@ -52,7 +52,7 @@ export default function AdminDashboard() {
       <header className="mb-10 flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-serif font-bold text-gradient mb-1">Panel de Control</h1>
-          <p className="text-white/50 text-sm">Monitoreo en tiempo real de QuickFade</p>
+          <p className="text-white/50 text-sm">Monitoreo en tiempo real de QuickStyle</p>
         </div>
         <div className="flex items-center gap-3">
           <div className="w-3 h-3 rounded-full bg-brand-green animate-pulse"></div>

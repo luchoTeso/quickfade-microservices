@@ -560,7 +560,7 @@ export default function Home() {
       {/* Barra de Países */}
       <nav className="fixed top-0 left-0 right-0 z-50 bg-[#0D0D0D]/95 backdrop-blur-md border-b border-brand-gold/20 px-4 sm:px-8 py-3 flex items-center justify-between">
         <div className="flex items-center gap-6">
-          <div className="font-serif text-xl font-black text-gradient tracking-wide">QuickFade</div>
+          <div className="font-serif text-xl font-black text-gradient tracking-wide">QuickStyle</div>
           <a href="/gestion" className="hidden sm:block text-xs font-bold text-white/50 hover:text-brand-gold transition-colors border border-white/10 px-3 py-1.5 rounded-full hover:border-brand-gold/30">
             Gestionar Cita
           </a>
